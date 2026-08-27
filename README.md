@@ -40,37 +40,39 @@ library(Prognoser)
 
 ## Data format
 
-`Prognoser()` reads data from the global environment via `get()`. It requires:
+`Prognoser()` reads data from the global environment via `get()`. Each entry in
+`expression_accession_vector` is a dataset-endpoint name such as `SimDataA_OS`,
+and it must come with a matching expression data frame and a survival data
+frame:
 
-- Each dataset is a `data.frame` with genes as rows and samples as columns.
-- Each dataset has a matching survival data frame named `<dataset>_survival`
+- Expression data frame: named exactly like the entry (e.g. `SimDataA_OS`),
+  with genes as rows and samples as columns.
+- Survival data frame: named `<entry>_survival` (e.g. `SimDataA_OS_survival`),
   with numeric columns `time` and `status` (`0` = alive, `1` = dead). Its row
   names must match the column names of the expression data frame.
 
+Entries that share the same prefix before `_` (e.g. `SimDataA_OS`,
+`SimDataA_RFS`, `SimDataA_PFS`, `SimDataA_DFS`) are grouped and meta-analyzed
+as one dataset.
+
 ## Simulated data
 
-The code below creates two simulated datasets (`SimDataA`, `SimDataB`) and
-their survival data. For demonstration purposes, we embed 10 "risk" genes
-(`GENE1`-`GENE10`, higher expression -> worse survival) and 10 "protective"
-genes (`GENE11`-`GENE20`, higher expression -> better survival).
+The code below simulates three datasets (`SimDataA`, `SimDataB`, `SimDataC`).
+Each dataset has the same expression profile and four prognostic endpoints
+(`OS`, `RFS`, `PFS`, `DFS`). We embed 10 "risk" genes (`GENE1`-`GENE10`, higher
+expression -> worse survival) and 10 "protective" genes (`GENE11`-`GENE20`,
+higher expression -> better survival).
 
 ```r
 set.seed(123)
+
+endpoints <- c("OS", "RFS", "PFS", "DFS")
 
 make_dataset <- function(n_samples = 80, n_genes = 100, seed = 1) {
   set.seed(seed)
 
   # Latent risk score: higher score -> worse survival
   risk_score <- rnorm(n_samples)
-
-  # Survival data: higher risk -> shorter survival time
-  time <- rweibull(n_samples, shape = 1, scale = exp(2 - risk_score))
-  status <- rbinom(n_samples, 1, 0.7)
-  surv <- data.frame(
-    time = round(time, 3),
-    status = status,
-    row.names = paste0("S", seq_len(n_samples))
-  )
 
   # Expression matrix: genes as rows, samples as columns
   mat <- matrix(rnorm(n_samples * n_genes), nrow = n_genes, ncol = n_samples)
@@ -85,27 +87,67 @@ make_dataset <- function(n_samples = 80, n_genes = 100, seed = 1) {
   rownames(expr) <- paste0("GENE", seq_len(n_genes))
   colnames(expr) <- paste0("S", seq_len(n_samples))
 
-  list(expr = expr, surv = surv)
+  make_surv <- function(risk_score, ep_seed) {
+    set.seed(ep_seed)
+    eps <- rnorm(length(risk_score), 0, 0.3)
+    time <- rweibull(length(risk_score), shape = 1, scale = exp(2 - risk_score + eps))
+    status <- rbinom(length(risk_score), 1, 0.7)
+    data.frame(
+      time = round(time, 3),
+      status = status,
+      row.names = paste0("S", seq_along(risk_score))
+    )
+  }
+
+  list(
+    expr = expr,
+    OS = make_surv(risk_score, seed * 10 + 1),
+    RFS = make_surv(risk_score, seed * 10 + 2),
+    PFS = make_surv(risk_score, seed * 10 + 3),
+    DFS = make_surv(risk_score, seed * 10 + 4)
+  )
 }
 
 dA <- make_dataset(seed = 11)
 dB <- make_dataset(seed = 22)
+dC <- make_dataset(seed = 33)
 
-# Put data into the global environment (the function reads them via get())
-SimDataA <- dA$expr
-SimDataA_survival <- dA$surv
-SimDataB <- dB$expr
-SimDataB_survival <- dB$surv
+# Expose every dataset-endpoint pair in the global environment with the
+# expected naming convention: <Dataset>_<Endpoint> and <Dataset>_<Endpoint>_survival
+for (ds in c("A", "B", "C")) {
+  d <- get(paste0("d", ds))
+  for (ep in endpoints) {
+    assign(paste0("SimData", ds, "_", ep), d$expr)
+    assign(paste0("SimData", ds, "_", ep, "_survival"), d[[ep]])
+  }
+}
 ```
 
 ## Run
 
 ```r
-# Optional prior / knowledge gene sets (added to the candidate gene-set pool)
-knowledge <- list(immune = c("GENE1", "GENE2", "GENE3", "GENE11", "GENE12"))
+datasets <- c(
+  "SimDataA_OS", "SimDataA_RFS", "SimDataA_PFS", "SimDataA_DFS",
+  "SimDataB_OS", "SimDataB_RFS", "SimDataB_PFS", "SimDataB_DFS",
+  "SimDataC_OS", "SimDataC_RFS", "SimDataC_PFS", "SimDataC_DFS"
+)
+
+# Prior / knowledge gene sets (at least 10 in this example)
+knowledge <- list(
+  immune_response = c("GENE1", "GENE2", "GENE3", "GENE11"),
+  cell_cycle = c("GENE4", "GENE5", "GENE6"),
+  apoptosis = c("GENE7", "GENE8", "GENE14"),
+  dna_repair = c("GENE9", "GENE10", "GENE15"),
+  metabolism = c("GENE11", "GENE12", "GENE13"),
+  angiogenesis = c("GENE16", "GENE17", "GENE18"),
+  inflammation = c("GENE19", "GENE20", "GENE1"),
+  proliferation = c("GENE2", "GENE4", "GENE6", "GENE8"),
+  signaling = c("GENE3", "GENE5", "GENE7", "GENE9"),
+  epithelial = c("GENE10", "GENE12", "GENE14", "GENE16")
+)
 
 result <- Prognoser(
-  expression_accession_vector = c("SimDataA", "SimDataB"),
+  expression_accession_vector = datasets,
   knowledge_genesets = knowledge,
   denovo_threshold = 0.05,
   gene_threshold = 0.01,
@@ -129,7 +171,7 @@ output stable; adjust them as needed. Defaults are listed below.
 
 | Argument | Description | Default |
 | --- | --- | --- |
-| `expression_accession_vector` | Dataset names; each must exist in the global environment together with `<name>_survival` | none |
+| `expression_accession_vector` | Dataset-endpoint names; each must exist in the global environment together with `<name>_survival` | none |
 | `denovo_threshold` | P-value threshold for univariate Cox screening (protective / risk genes) | `0.05` |
 | `knowledge_genesets` | A `list` of prior gene sets (character vectors) | none |
 | `na_ratio` | Maximum allowed proportion of missing values per gene across datasets | `0.3` |
@@ -154,3 +196,5 @@ output stable; adjust them as needed. Defaults are listed below.
    will cause `hclust()` to error.
 2. Data must be in the global environment and named exactly `<dataset>` and
    `<dataset>_survival`.
+3. The meta-analysis step may print warnings from the `meta` package for some
+   genes. These are non-fatal and can be ignored.
