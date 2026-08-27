@@ -1,12 +1,13 @@
 # Prognoser
 
-`Prognoser` 是一个整合多组表达谱与生存信息、发现预后基因标签（prognostic gene
-signatures）的 R 包。它在每个数据集中进行单变量 Cox 回归，综合多个数据集筛选保护型
-（HR < 1）和风险型（HR >= 1）基因，并通过聚类去除冗余，最终输出非冗余基因集。
+`Prognoser` is an R package for integrative prognostic gene-signature discovery.
+It runs univariate Cox regression in each dataset, screens protective
+(HR < 1) and risk (HR >= 1) genes across multiple datasets, and clusters gene
+sets to remove redundancy, returning non-redundant gene signatures.
 
-## 依赖
+## Dependencies
 
-运行前请确认已安装以下 R 包：
+Make sure the following R packages are installed:
 
 - `survival`
 - `RobustRankAggreg`
@@ -16,41 +17,42 @@ signatures）的 R 包。它在每个数据集中进行单变量 Cox 回归，�
 install.packages(c("survival", "RobustRankAggreg", "meta"))
 ```
 
-## 安装
+## Installation
 
-### 方式一：从源码压缩包安装
+### Option 1: install from the source tarball
 
 ```r
 install.packages("~/Desktop/Prognoser_0.1.0.tar.gz", repos = NULL, type = "source")
 ```
 
-### 方式二：从 GitHub 安装
+### Option 2: install from GitHub
 
 ```r
 install.packages("remotes")
 remotes::install_github("FangZY-Lab/Prognoser")
 ```
 
-安装完成后加载：
+Then load the package:
 
 ```r
 library(Prognoser)
 ```
 
-## 数据格式
+## Data format
 
-`Prognoser()` 通过 `get()` 从全局环境中读取数据，要求：
+`Prognoser()` reads data from the global environment via `get()`. It requires:
 
-- 每个数据集是一个 `data.frame`，行名为基因名，列名为样本名。
-- 每个数据集对应一个生存数据框，命名规则为 `<数据集名>_survival`，包含 `time`
-  （数值）和 `status`（数值，`0` = 存活，`1` = 死亡）两列，行名为与表达矩阵列名
-  一致的样本名。
+- Each dataset is a `data.frame` with genes as rows and samples as columns.
+- Each dataset has a matching survival data frame named `<dataset>_survival`
+  with numeric columns `time` and `status` (`0` = alive, `1` = dead). Its row
+  names must match the column names of the expression data frame.
 
-## 生成模拟数据
+## Simulated data
 
-下面的代码生成两个模拟数据集（`SimDataA`、`SimDataB`）及其生存数据。为了演示，
-在表达矩阵中植入了 10 个“风险基因”（`GENE1`–`GENE10`，表达越高生存越差）和
-10 个“保护基因”（`GENE11`–`GENE20`，表达越高生存越好）。
+The code below creates two simulated datasets (`SimDataA`, `SimDataB`) and
+their survival data. For demonstration purposes, we embed 10 "risk" genes
+(`GENE1`-`GENE10`, higher expression -> worse survival) and 10 "protective"
+genes (`GENE11`-`GENE20`, higher expression -> better survival).
 
 ```r
 set.seed(123)
@@ -58,10 +60,10 @@ set.seed(123)
 make_dataset <- function(n_samples = 80, n_genes = 100, seed = 1) {
   set.seed(seed)
 
-  # 潜在风险分数：分数越高，生存越差
+  # Latent risk score: higher score -> worse survival
   risk_score <- rnorm(n_samples)
 
-  # 生存数据：风险越高，生存时间越短
+  # Survival data: higher risk -> shorter survival time
   time <- rweibull(n_samples, shape = 1, scale = exp(2 - risk_score))
   status <- rbinom(n_samples, 1, 0.7)
   surv <- data.frame(
@@ -70,13 +72,13 @@ make_dataset <- function(n_samples = 80, n_genes = 100, seed = 1) {
     row.names = paste0("S", seq_len(n_samples))
   )
 
-  # 表达矩阵：行为基因，列为样本
+  # Expression matrix: genes as rows, samples as columns
   mat <- matrix(rnorm(n_samples * n_genes), nrow = n_genes, ncol = n_samples)
 
-  # 前 10 个基因为风险基因（与 risk_score 正相关）
+  # First 10 genes are risk genes (positively correlated with risk_score)
   mat[1:10, ] <- mat[1:10, ] + matrix(rep(risk_score * 2, each = 10), nrow = 10)
 
-  # 第 11-20 个基因为保护基因（与 risk_score 负相关）
+  # Genes 11-20 are protective genes (negatively correlated with risk_score)
   mat[11:20, ] <- mat[11:20, ] - matrix(rep(risk_score * 2, each = 10), nrow = 10)
 
   expr <- as.data.frame(mat)
@@ -89,17 +91,17 @@ make_dataset <- function(n_samples = 80, n_genes = 100, seed = 1) {
 dA <- make_dataset(seed = 11)
 dB <- make_dataset(seed = 22)
 
-# 放入全局环境（函数通过 get() 读取）
+# Put data into the global environment (the function reads them via get())
 SimDataA <- dA$expr
 SimDataA_survival <- dA$surv
 SimDataB <- dB$expr
 SimDataB_survival <- dB$surv
 ```
 
-## 运行
+## Run
 
 ```r
-# 先验 / 知识基因集（可选，作为候选基因池的一部分）
+# Optional prior / knowledge gene sets (added to the candidate gene-set pool)
 knowledge <- list(immune = c("GENE1", "GENE2", "GENE3", "GENE11", "GENE12"))
 
 result <- Prognoser(
@@ -112,41 +114,43 @@ result <- Prognoser(
   linkage = "ward.D"
 )
 
-# 最终的非冗余基因集
+# Final non-redundant gene sets
 str(result$genesets)
 
-# 保护方向 / 风险方向的综合效应矩阵
+# Combined effect matrices for the protective / risk directions
 head(result$combined_matrix_protection)
 head(result$combined_matrix_risk)
 ```
 
-示例中使用 `gene_threshold = 0.01`、`min_genes = 3` 是为了让演示结果更稳定；实际
-分析时可按需求调整，默认值见下表。
+The example uses `gene_threshold = 0.01` and `min_genes = 3` to keep the demo
+output stable; adjust them as needed. Defaults are listed below.
 
-## 参数说明
+## Arguments
 
-| 参数 | 说明 | 默认值 |
+| Argument | Description | Default |
 | --- | --- | --- |
-| `expression_accession_vector` | 数据集名向量，每个数据集需在全局环境中存在，并配套 `<名>_survival` | 无 |
-| `denovo_threshold` | 单变量 Cox 的 P 值阈值（筛选保护 / 风险基因） | `0.05` |
-| `knowledge_genesets` | 先验基因集列表（由字符向量组成的 `list`） | 无 |
-| `na_ratio` | 基因在数据集间缺失比例的上限 | `0.3` |
-| `gene_threshold` | 稳健秩聚合（RRA）的 P 值阈值 | `0.001` |
-| `min_genes` | 最终基因集的最小基因数 | `5` |
-| `similarity_threshold` | 基因集聚类的 Jaccard 相似度阈值 | `0.5` |
-| `linkage` | 层次聚类方法，需传入单个值（如 `"ward.D"`） | 见下方注意 |
+| `expression_accession_vector` | Dataset names; each must exist in the global environment together with `<name>_survival` | none |
+| `denovo_threshold` | P-value threshold for univariate Cox screening (protective / risk genes) | `0.05` |
+| `knowledge_genesets` | A `list` of prior gene sets (character vectors) | none |
+| `na_ratio` | Maximum allowed proportion of missing values per gene across datasets | `0.3` |
+| `gene_threshold` | P-value threshold from robust rank aggregation (RRA) | `0.001` |
+| `min_genes` | Minimum number of genes in a final clustered gene set | `5` |
+| `similarity_threshold` | Jaccard similarity threshold for clustering gene sets | `0.5` |
+| `linkage` | Hierarchical clustering method; pass a single value (e.g. `"ward.D"`) | see note below |
 
-## 返回结果
+## Return value
 
-- `genesets`：最终的非冗余基因集列表。低风险（保护）基因集以 `LRGS` 前缀命名，
-  高风险基因集以 `HRGS` 前缀命名。
-- `combined_matrix_protection`：保护方向基因的综合效应矩阵（符号 × `-log10(P)`），
-  含 `p_protection` 列。
-- `combined_matrix_risk`：风险方向基因的综合效应矩阵，含 `p_risk` 列。
+- `genesets`: final non-redundant gene sets. Low-risk (protective) sets are
+  prefixed with `LRGS`, high-risk sets with `HRGS`.
+- `combined_matrix_protection`: combined effect matrix (sign x `-log10(P)`) for
+  protective-direction genes, including a `p_protection` column.
+- `combined_matrix_risk`: combined effect matrix for risk-direction genes,
+  including a `p_risk` column.
 
-## 注意
+## Notes
 
-1. **`linkage` 参数必须显式传入单个方法**（如 `"ward.D"`、`"average"`、
-   `"complete"`）。如果不显式指定，会使用原函数的向量默认值，导致 `hclust()`
-   报错。
-2. 数据必须放在全局环境，且命名严格遵循 `<数据集名>` 与 `<数据集名>_survival`。
+1. **Pass a single value for `linkage`** (e.g. `"ward.D"`, `"average"`, or
+   `"complete"`). The function's default is a vector of choices; omitting it
+   will cause `hclust()` to error.
+2. Data must be in the global environment and named exactly `<dataset>` and
+   `<dataset>_survival`.
