@@ -1,0 +1,5 @@
+export(Prognoser)
+import(survival)
+import(RobustRankAggreg)
+import(meta)
+importFrom(stats, as.dist, cutree, hclust, na.omit, qnorm, var)

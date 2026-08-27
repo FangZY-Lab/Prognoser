@@ -1,0 +1,20 @@
+Package: Prognoser
+Type: Package
+Title: Integrative Prognostic Gene Signature Discovery
+Version: 0.1.0
+Authors@R: 
+    person("Dingkang", "Zhao", email = "dingkang.25@intl.zju.edu.cn",
+           role = c("aut", "cre"))
+Description: Integrates multiple expression datasets and corresponding
+    survival information to discover prognostic gene signatures through
+    univariate Cox regression, meta-analysis, gene screening, and
+    clustering-based redundancy removal.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Depends: 
+    R (>= 3.5.0)
+Imports: 
+    meta,
+    RobustRankAggreg,
+    stats,
+    survival

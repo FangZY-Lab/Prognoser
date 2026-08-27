@@ -1,0 +1,10 @@
+# R session and project files
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+*.Rproj
+
+# R package build artifacts
+.Rcheck/
+*.tar.gz
