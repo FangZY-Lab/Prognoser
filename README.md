@@ -1,67 +1,88 @@
 # Prognoser
 
-`Prognoser` is an R package for integrative prognostic gene-signature discovery.
-It runs univariate Cox regression in each dataset, screens protective
-(HR < 1) and risk (HR >= 1) genes across multiple datasets, and clusters gene
-sets to remove redundancy, returning non-redundant gene signatures.
+Discover prognostic gene signatures by integrating multiple expression and
+survival datasets.
 
-## Dependencies
+## What is Prognoser?
 
-Make sure the following R packages are installed:
+A **prognostic gene signature** is a set of genes whose expression is
+associated with patient survival. `Prognoser` looks for two kinds of genes:
 
-- `survival`
-- `RobustRankAggreg`
-- `meta`
+- **Risk genes** (hazard ratio HR > 1): higher expression means worse
+  survival.
+- **Protective genes** (hazard ratio HR < 1): higher expression means better
+  survival.
+
+After finding these genes, `Prognoser` removes redundant gene sets and returns
+a compact list of signatures.
+
+## How it works
+
+`Prognoser` runs the following steps:
+
+1. **Load data.** Read one expression matrix per dataset-endpoint, plus the
+   matching survival data (`time` and `status`).
+2. **Univariate Cox regression.** For every gene, fit a Cox model to estimate
+   its hazard ratio (HR) and p-value.
+3. **Screen genes.** Keep protective genes (HR < 1) and risk genes (HR >= 1)
+   that pass a p-value threshold.
+4. **Meta-analysis.** When several endpoints or datasets share the same prefix
+   (for example `SimDataA_OS`, `SimDataA_RFS`, ...), combine their results
+   with a random-effects meta-analysis.
+5. **Robust rank aggregation.** Build a combined effect matrix and rank genes
+   with the RRA method to select stable genes.
+6. **Add prior knowledge.** Merge user-provided gene sets into the candidate
+   pool.
+7. **Remove redundancy.** Cluster gene sets by Jaccard similarity and keep
+   non-redundant sets with enough genes.
+8. **Return.** A list of final high-risk (`HRGS`) and low-risk (`LRGS`)
+   signatures, plus the combined effect matrices.
+
+## Quick start (fresh R environment)
+
+This assumes a new R session with no packages installed. Run the following to
+install everything:
 
 ```r
+# Dependencies
 install.packages(c("survival", "RobustRankAggreg", "meta"))
-```
 
-## Installation
-
-### Option 1: install from the source tarball
-
-```r
-install.packages("~/Desktop/Prognoser_0.1.0.tar.gz", repos = NULL, type = "source")
-```
-
-### Option 2: install from GitHub
-
-```r
+# Package itself
 install.packages("remotes")
 remotes::install_github("FangZY-Lab/Prognoser")
-```
 
-Then load the package:
-
-```r
 library(Prognoser)
 ```
+
+`meta` will automatically install a few additional packages (`metafor`,
+`metabook`, `metadat`, `CompQuadForm`); that is expected.
+
+Then continue with the simulated-data example below.
 
 ## Data format
 
 `Prognoser()` reads data from the global environment via `get()`. Each entry in
 `expression_accession_vector` is a dataset-endpoint name such as `SimDataA_OS`,
-and it must come with a matching expression data frame and a survival data
-frame:
+and it must come with two data frames:
 
-- Expression data frame: named exactly like the entry (e.g. `SimDataA_OS`),
-  with genes as rows and samples as columns.
-- Survival data frame: named `<entry>_survival` (e.g. `SimDataA_OS_survival`),
-  with numeric columns `time` and `status` (`0` = alive, `1` = dead). Its row
-  names must match the column names of the expression data frame.
+- Expression data frame: named exactly like the entry (for example
+  `SimDataA_OS`), with genes as rows and samples as columns.
+- Survival data frame: named `<entry>_survival` (for example
+  `SimDataA_OS_survival`), with numeric columns `time` and `status` (`0` =
+  alive, `1` = dead). Its row names must match the column names of the
+  expression data frame.
 
-Entries that share the same prefix before `_` (e.g. `SimDataA_OS`,
+Entries that share the same prefix before `_` (for example `SimDataA_OS`,
 `SimDataA_RFS`, `SimDataA_PFS`, `SimDataA_DFS`) are grouped and meta-analyzed
 as one dataset.
 
 ## Simulated data
 
 The code below simulates three datasets (`SimDataA`, `SimDataB`, `SimDataC`).
-Each dataset has the same expression profile and four prognostic endpoints
-(`OS`, `RFS`, `PFS`, `DFS`). We embed 10 "risk" genes (`GENE1`-`GENE10`, higher
-expression -> worse survival) and 10 "protective" genes (`GENE11`-`GENE20`,
-higher expression -> better survival).
+Each dataset has one expression profile and four prognostic endpoints (`OS`,
+`RFS`, `PFS`, `DFS`). To make the result easy to interpret, we plant 10 "risk"
+genes (`GENE1`-`GENE10`, higher expression -> worse survival) and 10
+"protective" genes (`GENE11`-`GENE20`, higher expression -> better survival).
 
 ```r
 set.seed(123)
@@ -164,6 +185,10 @@ head(result$combined_matrix_protection)
 head(result$combined_matrix_risk)
 ```
 
+If the demo works, `result$genesets$HRGS1` should contain the planted risk
+genes (`GENE1`-`GENE10`) and `result$genesets$LRGS1` the planted protective
+genes (`GENE11`-`GENE20`).
+
 The example uses `gene_threshold = 0.01` and `min_genes = 3` to keep the demo
 output stable; adjust them as needed. Defaults are listed below.
 
@@ -178,7 +203,7 @@ output stable; adjust them as needed. Defaults are listed below.
 | `gene_threshold` | P-value threshold from robust rank aggregation (RRA) | `0.001` |
 | `min_genes` | Minimum number of genes in a final clustered gene set | `5` |
 | `similarity_threshold` | Jaccard similarity threshold for clustering gene sets | `0.5` |
-| `linkage` | Hierarchical clustering method; pass a single value (e.g. `"ward.D"`) | see note below |
+| `linkage` | Hierarchical clustering method; pass a single value (for example `"ward.D"`) | see note below |
 
 ## Return value
 
@@ -191,10 +216,16 @@ output stable; adjust them as needed. Defaults are listed below.
 
 ## Notes
 
-1. **Pass a single value for `linkage`** (e.g. `"ward.D"`, `"average"`, or
-   `"complete"`). The function's default is a vector of choices; omitting it
+1. **Pass a single value for `linkage`** (for example `"ward.D"`, `"average"`,
+   or `"complete"`). The function's default is a vector of choices; omitting it
    will cause `hclust()` to error.
 2. Data must be in the global environment and named exactly `<dataset>` and
    `<dataset>_survival`.
 3. The meta-analysis step may print warnings from the `meta` package for some
    genes. These are non-fatal and can be ignored.
+
+## Author
+
+Dingkang Zhao (赵定康)
+
+Email: <dingkang.25@intl.zju.edu.cn>
