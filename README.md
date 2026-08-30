@@ -59,6 +59,147 @@ curated, non-redundant set of signatures.
 8. **Return.** A list of final high-risk (`HRGS`) and low-risk (`LRGS`)
    signatures, plus the combined effect matrices.
 
+## Pipeline overview
+
+```mermaid
+flowchart TB
+
+    %% ================= INPUT =================
+    subgraph IN["Input"]
+        IN_EXP["Expression matrices<br/>(genes x samples)"]
+        IN_SURV["Survival data<br/>(time, status)"]
+        IN_KNOW["Prior knowledge<br/>gene sets"]
+    end
+
+    %% ================= PREPROCESSING =================
+    subgraph PREP["Data loading and preprocessing"]
+        direction TB
+        PR_LOAD["Load data via get()"]
+        PR_GROUP["Group datasets<br/>by prefix (_)"]
+        PR_VAR["Remove zero-variance<br/>genes"]
+        PR_MERGE["Merge expression<br/>with survival"]
+    end
+
+    %% ================= COX =================
+    subgraph COX["Univariate Cox regression"]
+        direction TB
+        CX_MODEL["Per-gene Cox model"]
+        CX_HR["Hazard ratio (HR)"]
+        CX_P["P-value"]
+    end
+
+    %% ================= META =================
+    subgraph META["Meta-analysis"]
+        direction TB
+        ME_DEC{"Multiple datasets<br/>share prefix?"}
+        ME_META["Random-effects<br/>meta-analysis (DL)"]
+        ME_Z["z = sign(log HR)<br/>x qnorm(1 - P/2)"]
+        ME_SE["se = log HR / z"]
+        ME_CHR["Combined HR"]
+        ME_CP["Combined P-value"]
+    end
+
+    %% ================= SCREEN =================
+    subgraph SCREEN["Gene screening and direction"]
+        direction TB
+        SC_DIR["Direction classification"]
+        SC_PROT["Protection (HR < 1)"]
+        SC_RISK["Risk (HR >= 1)"]
+        SC_DEN["denovo_threshold filter"]
+        SC_SORT["Sort by P-value"]
+    end
+
+    %% ================= KNOWLEDGE =================
+    subgraph KNOW["Knowledge integration"]
+        direction TB
+        KN_PAD["Pad gene sets"]
+        KN_LRGS["LRGS (low-risk)"]
+        KN_HRGS["HRGS (high-risk)"]
+    end
+
+    %% ================= EFFECT =================
+    subgraph EFFECT["Effect-size matrix and RRA"]
+        direction TB
+        EF_PM["P-matrix = -log10(P)"]
+        EF_HM["HR-matrix = sign"]
+        EF_CM["Combined matrix<br/>= sign x -log10(P)"]
+        EF_NAF["NA filter (na_ratio)"]
+        EF_RRA["Robust Rank Aggregation<br/>(aggregateRanks)"]
+        EF_PP["p_protection"]
+        EF_PR["p_risk"]
+        EF_GPF["Gene pool filter<br/>(gene_threshold)"]
+        EF_PUR["Purify knowledge sets<br/>(intersection)"]
+    end
+
+    %% ================= REDUNDANCY =================
+    subgraph RED["Redundancy removal"]
+        direction TB
+        RD_JAC["Jaccard similarity matrix"]
+        RD_LINK["Hierarchical clustering"]
+        RD_WD["ward.D / ward.D2"]
+        RD_SC["single / complete"]
+        RD_AM["average / mcquitty"]
+        RD_MC["median / centroid"]
+        RD_CUT["cutree<br/>(h = 1 - similarity_threshold)"]
+        RD_UNION["Merge similar sets<br/>(union)"]
+        RD_MIN["min_genes filter"]
+    end
+
+    %% ================= OUTPUT =================
+    subgraph OUT["Output"]
+        OU_GS["genesets<br/>(HRGS / LRGS)"]
+        OU_CMP["combined_matrix_protection"]
+        OU_CMR["combined_matrix_risk"]
+    end
+
+    %% ================= EDGES =================
+    IN_EXP --> PR_LOAD
+    IN_SURV --> PR_LOAD
+    PR_LOAD --> PR_GROUP --> PR_VAR --> PR_MERGE --> CX_MODEL
+    CX_MODEL --> CX_HR
+    CX_MODEL --> CX_P
+    CX_HR --> ME_DEC
+    CX_P --> ME_DEC
+    ME_DEC -->|yes| ME_META
+    ME_DEC -->|no| SC_DIR
+    ME_META --> ME_Z --> ME_SE
+    ME_SE --> ME_CHR --> SC_DIR
+    ME_SE --> ME_CP --> SC_DIR
+    SC_DIR --> SC_PROT
+    SC_DIR --> SC_RISK
+    SC_PROT --> SC_DEN
+    SC_RISK --> SC_DEN
+    SC_DEN --> SC_SORT
+    IN_KNOW --> KN_PAD
+    SC_SORT --> KN_PAD
+    KN_PAD --> KN_LRGS
+    KN_PAD --> KN_HRGS
+    SC_SORT --> EF_PM
+    SC_SORT --> EF_HM
+    EF_PM --> EF_CM
+    EF_HM --> EF_CM
+    EF_CM --> EF_NAF --> EF_RRA
+    EF_RRA --> EF_PP
+    EF_RRA --> EF_PR
+    EF_PP --> EF_GPF
+    EF_PR --> EF_GPF
+    EF_GPF --> EF_PUR
+    KN_LRGS --> EF_PUR
+    KN_HRGS --> EF_PUR
+    EF_PUR --> RD_JAC --> RD_LINK
+    RD_LINK --> RD_WD
+    RD_LINK --> RD_SC
+    RD_LINK --> RD_AM
+    RD_LINK --> RD_MC
+    RD_WD --> RD_CUT
+    RD_SC --> RD_CUT
+    RD_AM --> RD_CUT
+    RD_MC --> RD_CUT
+    RD_CUT --> RD_UNION --> RD_MIN --> OU_GS
+    EF_CM --> OU_CMP
+    EF_CM --> OU_CMR
+```
+
 ## Quick start (fresh R environment)
 
 This assumes a new R session with no packages installed. Run the following to
