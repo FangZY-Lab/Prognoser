@@ -1,20 +1,41 @@
 # Prognoser
 
-Discover prognostic gene signatures by integrating multiple expression and
-survival datasets.
+A unified, direction-aware framework for discovering robust prognostic gene
+signatures from multi-cohort, multi-endpoint survival data.
+
+## Highlights
+
+- **Direction-aware modeling.** Prognoser resolves low-risk (protective) and
+  high-risk (risk) signatures separately, preserving the biological direction
+  of every gene-survival association rather than collapsing it into a single
+  direction-agnostic score.
+- **Multi-cohort, multi-endpoint integration.** OS, RFS, PFS, and DFS are
+  jointly analyzed within each dataset and meta-analyzed across cohorts,
+  markedly increasing statistical power, stability, and cross-study
+  generalizability.
+- **Evidence fusion.** A signed effect-size matrix (direction x `-log10(P)`)
+  is combined with robust rank aggregation (RRA) to prioritize genes that are
+  reproducibly associated with outcome.
+- **Knowledge-guided discovery.** Prior pathway gene sets are seamlessly
+  incorporated into the candidate pool, bridging data-driven and
+  hypothesis-driven analyses.
+- **Redundancy-aware consolidation.** Jaccard-similarity clustering removes
+  redundant signatures and returns a compact, interpretable panel ready for
+  downstream validation and clinical translation.
 
 ## What is Prognoser?
 
 A **prognostic gene signature** is a set of genes whose expression is
-associated with patient survival. `Prognoser` looks for two kinds of genes:
+associated with patient survival. `Prognoser` identifies two kinds of genes:
 
 - **Risk genes** (hazard ratio HR > 1): higher expression means worse
   survival.
 - **Protective genes** (hazard ratio HR < 1): higher expression means better
   survival.
 
-After finding these genes, `Prognoser` removes redundant gene sets and returns
-a compact list of signatures.
+Unlike conventional single-dataset or undirected approaches, `Prognoser`
+explicitly resolves effect direction and integrates multiple studies into a
+curated, non-redundant set of signatures.
 
 ## How it works
 
@@ -25,12 +46,12 @@ a compact list of signatures.
 2. **Univariate Cox regression.** For every gene, fit a Cox model to estimate
    its hazard ratio (HR) and p-value.
 3. **Screen genes.** Keep protective genes (HR < 1) and risk genes (HR >= 1)
-   that pass a p-value threshold.
+   that pass a p-value threshold, preserving effect direction.
 4. **Meta-analysis.** When several endpoints or datasets share the same prefix
    (for example `SimDataA_OS`, `SimDataA_RFS`, ...), combine their results
    with a random-effects meta-analysis.
-5. **Robust rank aggregation.** Build a combined effect matrix and rank genes
-   with the RRA method to select stable genes.
+5. **Robust rank aggregation.** Build a signed combined effect matrix and rank
+   genes with the RRA method to select stable genes.
 6. **Add prior knowledge.** Merge user-provided gene sets into the candidate
    pool.
 7. **Remove redundancy.** Cluster gene sets by Jaccard similarity and keep
@@ -44,10 +65,10 @@ This assumes a new R session with no packages installed. Run the following to
 install everything:
 
 ```r
-# Dependencies
+# Core statistical dependencies
 install.packages(c("survival", "RobustRankAggreg", "meta"))
 
-# Package itself
+# Prognoser
 install.packages("remotes")
 remotes::install_github("FangZY-Lab/Prognoser")
 
