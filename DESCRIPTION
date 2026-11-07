@@ -1,7 +1,7 @@
 Package: Prognoser
 Type: Package
 Title: Integrative Prognostic Gene Signature Discovery
-Version: 0.2.0
+Version: 0.2.1
 Authors@R: 
     person("Dingkang", "Zhao", email = "dingkang.25@intl.zju.edu.cn",
            role = c("aut", "cre"))

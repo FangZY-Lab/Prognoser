@@ -105,14 +105,22 @@ Prognoser=function(expression_accession_vector,
   linkage <- match.arg(linkage, c("ward.D", "ward.D2", "single", "complete",
                                   "average", "mcquitty", "median", "centroid"))
   de_redundant_basis <- match.arg(de_redundant_basis)
-  library(survival)
-  library(RobustRankAggreg)
-  library(meta)
+  if (!length(expression_accession_vector)) {
+    stop("`expression_accession_vector` must name at least one dataset.", call. = FALSE)
+  }
+  needed = c(expression_accession_vector,
+             paste0(expression_accession_vector, "_survival"))
+  missing_objects = needed[!vapply(needed, exists, logical(1))]
+  if (length(missing_objects) > 0) {
+    stop("Objects not found in the calling environment: ",
+         paste(missing_objects, collapse = ", "),
+         ". Each dataset needs `<name>` and `<name>_survival`.", call. = FALSE)
+  }
   vector=expression_accession_vector
   list_data=list()
   list_survival_data=list()
   print("Start loading expression data and prognosis information.")
-  for (q in 1:length(vector)) {
+  for (q in seq_along(vector)) {
     list_data[[q]]=get(vector[q])
     list_survival_data[[q]]=get(paste0(vector[q],"_survival"))
     names(list_data)[q]=paste0(vector[q])
@@ -123,16 +131,16 @@ Prognoser=function(expression_accession_vector,
   })
   modified_vector=unique(as.character(modified_vector))
   large_list=c()
-  for (item in 1:length(modified_vector)) {
+  for (item in seq_along(modified_vector)) {
     assign(paste0("list_", modified_vector[item]),list_data[grep(paste0("^",modified_vector[item]), names(list_data))])
     large_list=c(large_list,paste0("list_", modified_vector[item]))
   }
   print("Cox univariate analysis were started.")
   genesets_protection=list()
   genesets_risk=list()
-  for (j in 1:length(large_list)) {
+  for (j in seq_along(large_list)) {
     expList=get(large_list[j])
-    for(i in 1:length(expList)){
+    for(i in seq_along(expList)){
       print("Begin processing expression data and prognostic data.")
       data=expList[[i]]
       dimnames=list(rownames(data),colnames(data))
@@ -163,7 +171,7 @@ Prognoser=function(expression_accession_vector,
       assign(paste0(names(expList)[i],"_result"),outTab)
     }
     if (length(expList)>1){
-      for (mp in 1:length(expList)){
+      for (mp in seq_along(expList)){
         if (mp == 1) { 
           result_single=get(paste0(names(expList)[mp],"_result"))
           result_p=result_single[,c("gene_id","P.Value")]
@@ -277,8 +285,9 @@ Prognoser=function(expression_accession_vector,
     }
   }
   print("Start screening genes.")
-  for (mq in 1:length(modified_vector)) {
+  for (mq in seq_along(modified_vector)) {
     result=get(paste0(modified_vector[mq],"_result"))
+    result=result[!is.na(result$HR) & !is.na(result$P.Value), , drop=FALSE]
     result_protection=result[result$HR < 1,]
     result_risk=result[result$HR >= 1,]
     result_protection=result_protection[order(result_protection$P.Value), ]
@@ -292,7 +301,7 @@ Prognoser=function(expression_accession_vector,
   }
   combined_protection=list()
   combined_risk=list()
-  for (mn in 1:length(modified_vector)) {
+  for (mn in seq_along(modified_vector)) {
     combined_protection[[mn]]=get(paste0(modified_vector[mn],"_protection"))
     names(combined_protection)[mn]=paste0(modified_vector[mn], "_protection")
     combined_risk[[mn]]=get(paste0(modified_vector[mn],"_risk"))
@@ -300,20 +309,20 @@ Prognoser=function(expression_accession_vector,
   }
   padded_list_protection=c(combined_protection,knowledge_genesets)
   padded_list_risk=c(combined_risk,knowledge_genesets)
-  names(padded_list_protection)=paste0("LRGS",1:length(padded_list_protection))
-  names(padded_list_risk)=paste0("HRGS",1:length(padded_list_risk))
-  for (i in 1:length(padded_list_protection)) {
+  names(padded_list_protection)=sprintf("LRGS%d", seq_along(padded_list_protection))
+  names(padded_list_risk)=sprintf("HRGS%d", seq_along(padded_list_risk))
+  for (i in seq_along(padded_list_protection)) {
     padded_list_protection[[i]]=unique(padded_list_protection[[i]])
   }
   print("Check for duplicates within each low risk gene set.")
   sapply(padded_list_protection, function(x) any(duplicated(x)))
-  for (i in 1:length(padded_list_risk)) {
+  for (i in seq_along(padded_list_risk)) {
     padded_list_risk[[i]]=unique(padded_list_risk[[i]])
   }
   print("Check for duplicates within each high risk gene set.")
   sapply(padded_list_risk, function(x) any(duplicated(x)))
   print("Start building the effect size matrix.")
-  for (mn in 1:length(modified_vector)) {
+  for (mn in seq_along(modified_vector)) {
     if (mn == 1){
       pmatrix=get(paste0(modified_vector[mn],"_result"))[,c("gene_id","P.Value")]
       colnames(pmatrix)[mn+1]=paste0(modified_vector[mn])
@@ -327,15 +336,15 @@ Prognoser=function(expression_accession_vector,
     }
   }
   rownames(pmatrix)=pmatrix[,1]
-  pmatrix=pmatrix[,-1]
+  pmatrix=pmatrix[,-1,drop=FALSE]
   pmatrix$na_count=rowSums(is.na(pmatrix))/ncol(pmatrix)
   pmatrix=pmatrix[pmatrix$na_count <= na_ratio,]
-  pmatrix=pmatrix[,!colnames(pmatrix) %in% "na_count"]
+  pmatrix=pmatrix[,!colnames(pmatrix) %in% "na_count",drop=FALSE]
   rownames(hrmatrix)=hrmatrix[,1]
-  hrmatrix=hrmatrix[,-1]
+  hrmatrix=hrmatrix[,-1,drop=FALSE]
   hrmatrix$na_count=rowSums(is.na(hrmatrix))/ncol(hrmatrix)
   hrmatrix=hrmatrix[hrmatrix$na_count <= na_ratio,]
-  hrmatrix=hrmatrix[,!colnames(hrmatrix) %in% "na_count"]
+  hrmatrix=hrmatrix[,!colnames(hrmatrix) %in% "na_count",drop=FALSE]
   hrmatrix=ifelse(hrmatrix>1,1,-1)
   pmatrix=-log10(pmatrix)
   combined_matrix=hrmatrix*pmatrix
@@ -361,7 +370,7 @@ Prognoser=function(expression_accession_vector,
   risk_gene_pool=combined_matrix_risk[combined_matrix_risk$p_risk < gene_threshold,]
   update_protection_geneset=list()
   protection_geneset=padded_list_protection
-  for (mi in 1:length(names(protection_geneset))){
+  for (mi in seq_along(names(protection_geneset))){
     coldn=protection_geneset[[mi]]
     coldn=coldn[coldn != ""]
     col_intersect_dn=intersect(coldn,rownames(protection_gene_pool))
@@ -370,7 +379,7 @@ Prognoser=function(expression_accession_vector,
   }
   update_risk_geneset=list()
   risk_geneset=padded_list_risk
-  for (mi in 1:length(names(risk_geneset))){
+  for (mi in seq_along(names(risk_geneset))){
     coldn=risk_geneset[[mi]]
     coldn=coldn[coldn != ""]
     col_intersect_dn=intersect(coldn,rownames(risk_gene_pool))
@@ -383,7 +392,7 @@ Prognoser=function(expression_accession_vector,
     })
   ]
   update_GENE_SETS_protection=list()
-  for (i in 1:length(names(GENE_SETS_protection))){
+  for (i in seq_along(names(GENE_SETS_protection))){
     coldn=GENE_SETS_protection[[i]]
     coldn=coldn[coldn != ""]
     update_GENE_SETS_protection[[i]]=coldn
@@ -396,7 +405,7 @@ Prognoser=function(expression_accession_vector,
     })
   ]
   update_GENE_SETS_risk=list()
-  for (i in 1:length(names(GENE_SETS_risk))){
+  for (i in seq_along(names(GENE_SETS_risk))){
     colup=GENE_SETS_risk[[i]]
     colup=colup[colup != ""]
     update_GENE_SETS_risk[[i]]=colup
@@ -410,7 +419,13 @@ Prognoser=function(expression_accession_vector,
   }
   print("Remove redundancy by clustering.")
   aux.merge = function(gsets, minjac, linkage_method, basis){
-    integration_matrix = outer(1:length(gsets), 1:length(gsets),
+    if (length(gsets) < 2L) {
+      empty_net = data.frame(from = character(0), to = character(0),
+                             jaccard = numeric(0), stringsAsFactors = FALSE)
+      return(list(sets = lapply(gsets, function(x) sort(unique(x))),
+                  network = if (basis == "igraph_component") empty_net else NULL))
+    }
+    integration_matrix = outer(seq_along(gsets), seq_along(gsets),
                                Vectorize(function(x, y) integration_ratio(gsets[[x]],gsets[[y]])))
     dimnames(integration_matrix) = list(names(gsets), names(gsets))
     integration_matrix[is.na(integration_matrix)] = 0
@@ -441,13 +456,13 @@ Prognoser=function(expression_accession_vector,
     }
     dist_matrix = as.dist(1 - integration_matrix)
     hc = hclust(dist_matrix, method = linkage_method)
-    if (is.unsorted(hc$height)) {
-      ord = order(hc$height)
-      hc$height = hc$height[ord]
-      hc$merge = hc$merge[ord, ]
-    }
+    ## centroid / median linkage can produce inversion ("crossing")
+    ## heights. cutree() refuses an unsorted tree, but reordering
+    ## hc$merge would break the parent references, so make the heights
+    ## monotone and leave the merge structure untouched.
+    if (is.unsorted(hc$height)) hc$height = cummax(hc$height)
     clust = cutree(hc, h = 1 - minjac)
-    list(sets = as.list(tapply(1:length(gsets), clust, function(i){sort(unique(unlist(gsets[i])))})),
+    list(sets = as.list(tapply(seq_along(gsets), clust, function(i){sort(unique(unlist(gsets[i])))})),
          network = NULL)
   }
   merged_protection = aux.merge(gsets = update_GENE_SETS_protection, minjac = similarity_threshold, linkage_method = linkage, basis = de_redundant_basis)
@@ -458,8 +473,8 @@ Prognoser=function(expression_accession_vector,
   update_GENE_SETS_disjunction_risk=update_GENE_SETS_disjunction_risk[!duplicated(lapply(update_GENE_SETS_disjunction_risk, sort))]
   update_GENE_SETS_disjunction_protection=update_GENE_SETS_disjunction_protection[sapply(update_GENE_SETS_disjunction_protection,length) >= min_genes]
   update_GENE_SETS_disjunction_risk=update_GENE_SETS_disjunction_risk[sapply(update_GENE_SETS_disjunction_risk,length) >= min_genes]
-  names(update_GENE_SETS_disjunction_protection)=paste0("LRGS", 1:length(update_GENE_SETS_disjunction_protection))
-  names(update_GENE_SETS_disjunction_risk)=paste0("HRGS", 1:length(update_GENE_SETS_disjunction_risk))
+  names(update_GENE_SETS_disjunction_protection)=sprintf("LRGS%d", seq_along(update_GENE_SETS_disjunction_protection))
+  names(update_GENE_SETS_disjunction_risk)=sprintf("HRGS%d", seq_along(update_GENE_SETS_disjunction_risk))
   update_GENE_SETS_disjunction=c(update_GENE_SETS_disjunction_risk,update_GENE_SETS_disjunction_protection)
   output=list(update_GENE_SETS_disjunction,combined_matrix_protection,combined_matrix_risk)
   names(output)=c("genesets","combined_matrix_protection","combined_matrix_risk")
