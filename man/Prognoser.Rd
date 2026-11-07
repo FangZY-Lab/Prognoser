@@ -5,8 +5,8 @@
 Prognoser(expression_accession_vector, denovo_threshold = 0.05,
   knowledge_genesets, na_ratio = 0.3, gene_threshold = 0.001,
   min_genes = 5, similarity_threshold = 0.5,
-  linkage = c("ward.D", "ward.D2", "single", "complete", "average",
-    "mcquitty", "median", "centroid"))
+  linkage = "ward.D",
+  de_redundant_basis = c("agglomeration", "igraph_component"))
 }
 \arguments{
   \item{expression_accession_vector}{A character vector of dataset names.
@@ -31,11 +31,26 @@ Prognoser(expression_accession_vector, denovo_threshold = 0.05,
   \item{similarity_threshold}{Numeric. Jaccard similarity threshold for
     clustering gene sets. Gene sets with similarity >= this value are merged.
     Default is 0.5.}
-  \item{linkage}{Character. Linkage method for hierarchical clustering
-    (passed to \code{\link[stats]{hclust}}). Default is \code{"ward.D"}.}
+  \item{linkage}{Character. Linkage method for the hierarchical-clustering
+    step. One of \code{"ward.D"}, \code{"ward.D2"}, \code{"single"},
+    \code{"complete"}, \code{"average"}, \code{"mcquitty"},
+    \code{"median"} or \code{"centroid"}. Ignored when
+    \code{de_redundant_basis = "igraph_component"}. Default is
+    \code{"ward.D"}.}
+  \item{de_redundant_basis}{Character. How biologically redundant gene sets
+    are consolidated. \code{"agglomeration"} (default) cuts the
+    hierarchical clustering of the Jaccard distances at
+    \code{1 - similarity_threshold} and unions each cluster.
+    \code{"igraph_component"} builds an undirected graph whose edges are
+    the gene-set pairs with Jaccard similarity at or above
+    \code{similarity_threshold}, then unions each connected component.
+    With \code{linkage = "single"} the two partitions are identical, so
+    \code{"igraph_component"} names the same consolidation explicitly,
+    is faster on the sparse graph and returns the network itself.}
 }
 \value{
-  A list with three elements:
+  A list with three elements, plus two more when
+  \code{de_redundant_basis = "igraph_component"}:
   \item{genesets}{A list of final non-redundant gene signatures, named with
     \code{"LRGS"} (low-risk / protection) and \code{"HRGS"} (high-risk)
     prefixes.}
@@ -45,6 +60,11 @@ Prognoser(expression_accession_vector, denovo_threshold = 0.05,
   \item{combined_matrix_risk}{A matrix of combined effect scores for
     risk-direction genes, including a column \code{p_risk} with robust rank
     aggregation scores.}
+  \item{network_protection}{The Jaccard edge list (\code{from},
+    \code{to}, \code{jaccard}) consolidated into the protection
+    signatures. Only present with
+    \code{de_redundant_basis = "igraph_component"}.}
+  \item{network_risk}{The same edge list for the risk signatures.}
 }
 \description{
   This function integrates multiple expression datasets and corresponding

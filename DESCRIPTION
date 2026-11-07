@@ -1,7 +1,7 @@
 Package: Prognoser
 Type: Package
 Title: Integrative Prognostic Gene Signature Discovery
-Version: 0.1.0
+Version: 0.2.0
 Authors@R: 
     person("Dingkang", "Zhao", email = "dingkang.25@intl.zju.edu.cn",
            role = c("aut", "cre"))
@@ -15,6 +15,8 @@ Depends:
     R (>= 3.5.0)
 Imports: 
     meta,
+    igraph,
     RobustRankAggreg,
     stats,
     survival
+Config/roxygen2/version: 8.1.1

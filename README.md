@@ -19,9 +19,11 @@ signatures from multi-cohort, multi-endpoint survival data.
 - **Knowledge-guided discovery.** Prior pathway gene sets are seamlessly
   incorporated into the candidate pool, bridging data-driven and
   hypothesis-driven analyses.
-- **Redundancy-aware consolidation.** Jaccard-similarity clustering removes
-  redundant signatures and returns a compact, interpretable panel ready for
-  downstream validation and clinical translation.
+- **Redundancy-aware consolidation.** Jaccard similarity is resolved either by
+  hierarchical clustering (`de_redundant_basis = "agglomeration"`) or by the
+  connected components of the Jaccard graph
+  (`de_redundant_basis = "igraph_component"`), returning a compact,
+  interpretable panel ready for downstream validation and clinical translation.
 
 ## What is Prognoser?
 
@@ -54,10 +56,12 @@ curated, non-redundant set of signatures.
    genes with the RRA method to select stable genes.
 6. **Add prior knowledge.** Merge user-provided gene sets into the candidate
    pool.
-7. **Remove redundancy.** Cluster gene sets by Jaccard similarity and keep
-   non-redundant sets with enough genes.
+7. **Remove redundancy.** Resolve Jaccard similarity between gene sets, either
+   by hierarchical clustering or by the connected components of the similarity
+   graph, and keep non-redundant sets with enough genes.
 8. **Return.** A list of final high-risk (`HRGS`) and low-risk (`LRGS`)
-   signatures, plus the combined effect matrices.
+   signatures, plus the combined effect matrices, and — with the graph-based
+   consolidation — the two Jaccard networks.
 
 ## Pipeline overview
 
@@ -135,12 +139,15 @@ flowchart TB
     subgraph RED["Redundancy removal"]
         direction TB
         RD_JAC["Jaccard similarity matrix"]
+        RD_BASIS{"de_redundant_basis?"}
         RD_LINK["Hierarchical clustering"]
         RD_WD["ward.D / ward.D2"]
         RD_SC["single / complete"]
         RD_AM["average / mcquitty"]
         RD_MC["median / centroid"]
         RD_CUT["cutree<br/>(h = 1 - similarity_threshold)"]
+        RD_IG["Connected components<br/>(edges: Jaccard &gt;= threshold)"]
+        RD_NET["Jaccard network"]
         RD_UNION["Merge similar sets<br/>(union)"]
         RD_MIN["min_genes filter"]
     end
@@ -150,6 +157,7 @@ flowchart TB
         OU_GS["genesets<br/>(HRGS / LRGS)"]
         OU_CMP["combined_matrix_protection"]
         OU_CMR["combined_matrix_risk"]
+        OU_NET["network_protection / network_risk"]
     end
 
     %% ================= EDGES =================
@@ -186,7 +194,9 @@ flowchart TB
     EF_GPF --> EF_PUR
     KN_LRGS --> EF_PUR
     KN_HRGS --> EF_PUR
-    EF_PUR --> RD_JAC --> RD_LINK
+    EF_PUR --> RD_JAC --> RD_BASIS
+    RD_BASIS -->|agglomeration| RD_LINK
+    RD_BASIS -->|igraph_component| RD_IG
     RD_LINK --> RD_WD
     RD_LINK --> RD_SC
     RD_LINK --> RD_AM
@@ -195,7 +205,11 @@ flowchart TB
     RD_SC --> RD_CUT
     RD_AM --> RD_CUT
     RD_MC --> RD_CUT
-    RD_CUT --> RD_UNION --> RD_MIN --> OU_GS
+    RD_CUT --> RD_UNION
+    RD_IG --> RD_UNION
+    RD_IG --> RD_NET
+    RD_UNION --> RD_MIN --> OU_GS
+    RD_NET --> OU_NET
     EF_CM --> OU_CMP
     EF_CM --> OU_CMR
 ```
@@ -336,7 +350,8 @@ result <- Prognoser(
   gene_threshold = 0.01,
   min_genes = 3,
   similarity_threshold = 0.5,
-  linkage = "ward.D"
+  linkage = "ward.D",                 # used by de_redundant_basis = "agglomeration"
+  de_redundant_basis = "agglomeration" # or "igraph_component"
 )
 
 # Final non-redundant gene sets
@@ -345,6 +360,24 @@ str(result$genesets)
 # Combined effect matrices for the protective / risk directions
 head(result$combined_matrix_protection)
 head(result$combined_matrix_risk)
+```
+
+Switching to the graph-based consolidation keeps everything else the same and
+adds the networks that were merged away:
+
+```r
+result_graph <- Prognoser(
+  expression_accession_vector = datasets,
+  knowledge_genesets = knowledge,
+  denovo_threshold = 0.05,
+  gene_threshold = 0.01,
+  min_genes = 3,
+  similarity_threshold = 0.5,
+  de_redundant_basis = "igraph_component"
+)
+
+head(result_graph$network_protection)   # from, to, jaccard
+head(result_graph$network_risk)
 ```
 
 If the demo works, `result$genesets$HRGS1` should contain the planted risk
@@ -365,7 +398,8 @@ output stable; adjust them as needed. Defaults are listed below.
 | `gene_threshold` | P-value threshold from robust rank aggregation (RRA) | `0.001` |
 | `min_genes` | Minimum number of genes in a final clustered gene set | `5` |
 | `similarity_threshold` | Jaccard similarity threshold for clustering gene sets | `0.5` |
-| `linkage` | Hierarchical clustering method; pass a single value (for example `"ward.D"`) | see note below |
+| `linkage` | Hierarchical clustering method for `de_redundant_basis = "agglomeration"` | `"ward.D"` |
+| `de_redundant_basis` | `"agglomeration"` (hierarchical clustering) or `"igraph_component"` (connected components of the Jaccard graph) | `"agglomeration"` |
 
 ## Return value
 
@@ -375,12 +409,24 @@ output stable; adjust them as needed. Defaults are listed below.
   protective-direction genes, including a `p_protection` column.
 - `combined_matrix_risk`: combined effect matrix for risk-direction genes,
   including a `p_risk` column.
+- `network_protection`, `network_risk`: the Jaccard edge lists (`from`, `to`,
+  `jaccard`) that were consolidated. Only returned when
+  `de_redundant_basis = "igraph_component"`.
 
 ## Notes
 
-1. **Pass a single value for `linkage`** (for example `"ward.D"`, `"average"`,
-   or `"complete"`). The function's default is a vector of choices; omitting it
-   will cause `hclust()` to error.
+1. **Two consolidation strategies.** `"agglomeration"` (the default) cuts a
+   hierarchical clustering of the Jaccard distances at
+   `1 - similarity_threshold`, using `linkage`. `"igraph_component"` builds an
+   undirected graph whose edges are the gene-set pairs with Jaccard at or above
+   `similarity_threshold` and unions each connected component. The two are
+   related: with `linkage = "single"` the agglomeration partition is identical
+   to the connected components of that graph, so the graph option is the same
+   consolidation named explicitly, is cheaper on a sparse graph, and returns the
+   network. Connected components are transitive, so a chain of pairwise-similar
+   sets can end up in one signature even when its two ends are not similar
+   themselves — raise `similarity_threshold` or use a stricter `linkage` if that
+   matters.
 2. Data must be in the global environment and named exactly `<dataset>` and
    `<dataset>_survival`.
 3. The meta-analysis step may print warnings from the `meta` package for some

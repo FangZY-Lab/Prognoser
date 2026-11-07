@@ -31,13 +31,27 @@
 #' @param similarity_threshold Numeric. Jaccard similarity threshold for
 #'        clustering gene sets. Gene sets with similarity >= this value are
 #'        merged. Default is 0.5.
-#' @param linkage Character. Linkage method for hierarchical clustering
-#'        (passed to \code{\link[stats]{hclust}}). Must be one of
-#'        \code{"ward.D"}, \code{"ward.D2"}, \code{"single"},
-#'        \code{"complete"}, \code{"average"}, \code{"mcquitty"},
-#'        \code{"median"}, or \code{"centroid"}. Default is \code{"ward.D"}.
+#' @param linkage Character. Linkage method for the hierarchical-clustering
+#'        step. Must be one of \code{"ward.D"}, \code{"ward.D2"},
+#'        \code{"single"}, \code{"complete"}, \code{"average"},
+#'        \code{"mcquitty"}, \code{"median"} or \code{"centroid"}.
+#'        Ignored when \code{de_redundant_basis = "igraph_component"}.
+#'        Default is \code{"ward.D"}.
+#' @param de_redundant_basis Character. How biologically redundant gene sets
+#'        are consolidated. \code{"agglomeration"} (default) cuts the
+#'        hierarchical clustering of the Jaccard distances at
+#'        \code{1 - similarity_threshold} and unions each cluster.
+#'        \code{"igraph_component"} builds an undirected graph whose edges
+#'        are the gene-set pairs with Jaccard similarity at or above
+#'        \code{similarity_threshold}, then unions each connected component.
+#'        The two are related: with \code{linkage = "single"} the
+#'        agglomeration partition is identical to the connected components of
+#'        that graph, so \code{"igraph_component"} names the same
+#'        consolidation explicitly, is faster on the sparse graph and returns
+#'        the network itself.
 #'
-#' @return A list with three elements:
+#' @return A list with three elements, plus two more when
+#' \code{de_redundant_basis = "igraph_component"}:
 #' \itemize{
 #'   \item \code{genesets}: A list of final non-redundant gene signatures,
 #'         named with \code{"LRGS"} (low-risk / protection) and \code{"HRGS"}
@@ -47,9 +61,15 @@
 #'         a column \code{p_protection} with robust rank aggregation scores.
 #'   \item \code{combined_matrix_risk}: A matrix of combined effect scores
 #'         for risk-direction genes, including a column \code{p_risk} with
+#'   \item \code{network_protection}: The Jaccard edge list
+#'         (\code{from}, \code{to}, \code{jaccard}) consolidated into the
+#'         protection signatures. Only present with
+#'         \code{de_redundant_basis = "igraph_component"}.
+#'   \item \code{network_risk}: The same edge list for the risk signatures.
 #'         robust rank aggregation scores.
 #' }
 #'
+#' @importFrom igraph components graph_from_data_frame
 #' @import survival
 #' @import RobustRankAggreg
 #' @import meta
@@ -80,7 +100,11 @@ Prognoser=function(expression_accession_vector,
                    gene_threshold=0.001,
                    min_genes=5,
                    similarity_threshold=0.5,
-                   linkage=c("ward.D", "ward.D2", "single", "complete", "average", "mcquitty", "median", "centroid")){
+                   linkage="ward.D",
+                   de_redundant_basis=c("agglomeration", "igraph_component")){
+  linkage <- match.arg(linkage, c("ward.D", "ward.D2", "single", "complete",
+                                  "average", "mcquitty", "median", "centroid"))
+  de_redundant_basis <- match.arg(de_redundant_basis)
   library(survival)
   library(RobustRankAggreg)
   library(meta)
@@ -385,13 +409,36 @@ Prognoser=function(expression_accession_vector,
     return(ratio)
   }
   print("Remove redundancy by clustering.")
-  aux.merge = function(gsets, minjac, linkage_method){
-    integration_matrix = outer(1:length(gsets), 1:length(gsets), 
+  aux.merge = function(gsets, minjac, linkage_method, basis){
+    integration_matrix = outer(1:length(gsets), 1:length(gsets),
                                Vectorize(function(x, y) integration_ratio(gsets[[x]],gsets[[y]])))
     dimnames(integration_matrix) = list(names(gsets), names(gsets))
     integration_matrix[is.na(integration_matrix)] = 0
     integration_matrix[is.infinite(integration_matrix)] = 0
     integration_matrix = pmax(pmin(integration_matrix, 1), 0)
+    if (basis == "igraph_component") {
+      upper = upper.tri(integration_matrix)
+      keep = upper & integration_matrix >= minjac
+      network = data.frame(from = rownames(integration_matrix)[row(integration_matrix)[keep]],
+                           to = colnames(integration_matrix)[col(integration_matrix)[keep]],
+                           jaccard = integration_matrix[keep],
+                           stringsAsFactors = FALSE)
+      if (nrow(network) == 0) {
+        print("No gene-set pair reaches the similarity threshold; nothing to merge.")
+        merged = lapply(gsets, function(x) sort(unique(x)))
+      } else {
+        g = igraph::graph_from_data_frame(network[, c("from", "to", "jaccard")],
+                                          directed = FALSE)
+        comp = igraph::components(g)
+        groups = split(names(comp$membership), comp$membership)
+        merged = lapply(groups, function(nm) sort(unique(unlist(gsets[nm]))))
+        isolated = gsets[setdiff(names(gsets), names(comp$membership))]
+        if (length(isolated) > 0) {
+          merged = c(lapply(isolated, function(x) sort(unique(x))), merged)
+        }
+      }
+      return(list(sets = merged, network = network))
+    }
     dist_matrix = as.dist(1 - integration_matrix)
     hc = hclust(dist_matrix, method = linkage_method)
     if (is.unsorted(hc$height)) {
@@ -400,11 +447,14 @@ Prognoser=function(expression_accession_vector,
       hc$merge = hc$merge[ord, ]
     }
     clust = cutree(hc, h = 1 - minjac)
-    tapply(1:length(gsets), clust, function(i){sort(unique(unlist(gsets[i])))})	
+    list(sets = as.list(tapply(1:length(gsets), clust, function(i){sort(unique(unlist(gsets[i])))})),
+         network = NULL)
   }
-  update_GENE_SETS_disjunction_protection = aux.merge(gsets = update_GENE_SETS_protection, minjac = similarity_threshold, linkage_method=linkage)
+  merged_protection = aux.merge(gsets = update_GENE_SETS_protection, minjac = similarity_threshold, linkage_method = linkage, basis = de_redundant_basis)
+  merged_risk = aux.merge(gsets = update_GENE_SETS_risk, minjac = similarity_threshold, linkage_method = linkage, basis = de_redundant_basis)
+  update_GENE_SETS_disjunction_protection = merged_protection$sets
   update_GENE_SETS_disjunction_protection=update_GENE_SETS_disjunction_protection[!duplicated(lapply(update_GENE_SETS_disjunction_protection, sort))]
-  update_GENE_SETS_disjunction_risk = aux.merge(gsets = update_GENE_SETS_risk, minjac = similarity_threshold, linkage_method=linkage)
+  update_GENE_SETS_disjunction_risk = merged_risk$sets
   update_GENE_SETS_disjunction_risk=update_GENE_SETS_disjunction_risk[!duplicated(lapply(update_GENE_SETS_disjunction_risk, sort))]
   update_GENE_SETS_disjunction_protection=update_GENE_SETS_disjunction_protection[sapply(update_GENE_SETS_disjunction_protection,length) >= min_genes]
   update_GENE_SETS_disjunction_risk=update_GENE_SETS_disjunction_risk[sapply(update_GENE_SETS_disjunction_risk,length) >= min_genes]
@@ -413,6 +463,10 @@ Prognoser=function(expression_accession_vector,
   update_GENE_SETS_disjunction=c(update_GENE_SETS_disjunction_risk,update_GENE_SETS_disjunction_protection)
   output=list(update_GENE_SETS_disjunction,combined_matrix_protection,combined_matrix_risk)
   names(output)=c("genesets","combined_matrix_protection","combined_matrix_risk")
+  if (de_redundant_basis == "igraph_component") {
+    output$network_protection = merged_protection$network
+    output$network_risk = merged_risk$network
+  }
   return(output)
 }
 
